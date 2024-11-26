@@ -1,14 +1,23 @@
 package main
 
 import (
-	"fmt"
+	"database/sql"
 	"log"
 	"net/http"
+	"os"
 	"sync/atomic"
+
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+
+	"github.com/dUPYeYE/go-http/internal/database"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	db             *database.Queries
+	env            string
+	secret         string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -19,8 +28,33 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func main() {
+	// env
+	if err := godotenv.Load(); err != nil {
+		log.Fatal(err)
+	}
+	if os.Getenv("ENV") == "" {
+		log.Fatal("ENV is required")
+	}
+	if os.Getenv("DB_URL") == "" {
+		log.Fatal("DB_URL is required")
+	}
+
+	// database
+	db, err := sql.Open("postgres", os.Getenv("DB_URL"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	apiCfg := &apiConfig{
+		fileserverHits: atomic.Int32{},
+		db:             database.New(db),
+		env:            os.Getenv("ENV"),
+		secret:         os.Getenv("AUTH_SECRET"),
+	}
+
+	// app
 	serveMux := http.NewServeMux()
-	apiCfg := &apiConfig{}
 	serveMux.Handle(
 		"GET /app",
 		http.StripPrefix("/app", apiCfg.middlewareMetricsInc(http.FileServer(http.Dir("./app")))),
@@ -32,27 +66,25 @@ func main() {
 			apiCfg.middlewareMetricsInc(http.FileServer(http.Dir("./assets"))),
 		),
 	)
+
+	// api
 	serveMux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Header().Add("Content-Type", "text/plain; charset=utf-8")
 		w.Write([]byte("OK"))
 	})
-	serveMux.HandleFunc("GET /admin/metrics", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Header().Add("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(fmt.Sprintf(`
-          <html>
-            <body>
-              <h1>Welcome, Chirpy Admin</h1>
-              <p>Chirpy has been visited %d times!</p>
-            </body>
-          </html>
-        `, apiCfg.fileserverHits.Load())))
-	})
-	serveMux.HandleFunc("POST /admin/reset", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		apiCfg.fileserverHits.Store(0)
-	})
+	serveMux.Handle("GET /api/chirps/{id}", handleGetChirp(apiCfg))
+	serveMux.Handle("GET /api/chirps", handleGetChirps(apiCfg))
+	serveMux.Handle("POST /api/chirps", handleNewChirp(apiCfg))
+
+	serveMux.Handle("POST /api/login", handleLogin(apiCfg))
+
+	serveMux.Handle("GET /api/users", handleGetUsers(apiCfg))
+	serveMux.Handle("POST /api/users", handleNewUser(apiCfg))
+
+	// admin
+	serveMux.Handle("GET /admin/metrics", handleMetrics(apiCfg))
+	serveMux.Handle("POST /admin/reset", handeReset(apiCfg))
 
 	server := &http.Server{
 		Addr:    ":8080",
