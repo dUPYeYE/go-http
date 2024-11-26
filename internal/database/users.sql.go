@@ -18,7 +18,7 @@ VALUES (
   $2,
   $3
 )
-RETURNING id, email, password, created_at, updated_at
+RETURNING id, email, password, created_at, updated_at, is_chirpy_red
 `
 
 type CreateUserParams struct {
@@ -36,12 +36,13 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Password,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsChirpyRed,
 	)
 	return i, err
 }
 
 const getAllUsers = `-- name: GetAllUsers :many
-SELECT id, email, password, created_at, updated_at FROM users
+SELECT id, email, password, created_at, updated_at, is_chirpy_red FROM users
 `
 
 func (q *Queries) GetAllUsers(ctx context.Context) ([]User, error) {
@@ -59,6 +60,7 @@ func (q *Queries) GetAllUsers(ctx context.Context) ([]User, error) {
 			&i.Password,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IsChirpyRed,
 		); err != nil {
 			return nil, err
 		}
@@ -74,7 +76,7 @@ func (q *Queries) GetAllUsers(ctx context.Context) ([]User, error) {
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, password, created_at, updated_at FROM users WHERE email = $1
+SELECT id, email, password, created_at, updated_at, is_chirpy_red FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -86,6 +88,50 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.Password,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IsChirpyRed,
+	)
+	return i, err
+}
+
+const updateChirpyRed = `-- name: UpdateChirpyRed :exec
+UPDATE users
+SET is_chirpy_red = $2
+WHERE id = $1
+`
+
+type UpdateChirpyRedParams struct {
+	ID          uuid.UUID
+	IsChirpyRed bool
+}
+
+func (q *Queries) UpdateChirpyRed(ctx context.Context, arg UpdateChirpyRedParams) error {
+	_, err := q.db.ExecContext(ctx, updateChirpyRed, arg.ID, arg.IsChirpyRed)
+	return err
+}
+
+const updateUser = `-- name: UpdateUser :one
+UPDATE users
+SET email = $2, password = $3
+WHERE id = $1
+RETURNING id, email, password, created_at, updated_at, is_chirpy_red
+`
+
+type UpdateUserParams struct {
+	ID       uuid.UUID
+	Email    string
+	Password string
+}
+
+func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, error) {
+	row := q.db.QueryRowContext(ctx, updateUser, arg.ID, arg.Email, arg.Password)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Password,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsChirpyRed,
 	)
 	return i, err
 }

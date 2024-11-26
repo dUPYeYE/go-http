@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -30,25 +31,18 @@ func replaceCussWords(s string) string {
 func handleGetChirp(apiCfg *apiConfig) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+			respondWithError(w, http.StatusMethodNotAllowed, "Method Not Allowed", nil)
 			return
 		}
 
 		id := r.PathValue("id")
 		chirp, err := apiCfg.db.GetChirp(r.Context(), uuid.MustParse(id))
 		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
+			respondWithError(w, http.StatusNotFound, "Not Found", err)
 			return
 		}
 
-		w.WriteHeader(http.StatusOK)
-		w.Header().Add("Content-Type", "application/json")
-		respBody, err := json.Marshal(chirp)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Write(respBody)
+		respondWithJSON(w, http.StatusOK, chirp)
 	})
 }
 
@@ -56,24 +50,38 @@ func handleGetChirp(apiCfg *apiConfig) http.Handler {
 func handleGetChirps(apiCfg *apiConfig) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+			respondWithError(w, http.StatusMethodNotAllowed, "Method Not Allowed", nil)
 			return
 		}
 
-		chirps, err := apiCfg.db.GetAllChirps(r.Context())
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+		var chirps []database.Chirp
+		var err error
+		sortDir := r.URL.Query().Get("sort")
+		if sortDir == "" || (sortDir != "asc" && sortDir != "desc") {
+			sortDir = "asc"
+		}
+		authorId := r.URL.Query().Get("author_id")
+		if authorId != "" {
+			chirps, err = apiCfg.db.GetChirpsFromUser(r.Context(), uuid.MustParse(authorId))
+			if err != nil {
+				respondWithError(w, http.StatusInternalServerError, "Internal Server Error", err)
+				return
+			}
+		} else {
+			chirps, err = apiCfg.db.GetAllChirps(r.Context())
+			if err != nil {
+				respondWithError(w, http.StatusInternalServerError, "Internal Server Error", err)
+				return
+			}
 		}
 
-		w.WriteHeader(http.StatusOK)
-		w.Header().Add("Content-Type", "application/json")
-		respBody, err := json.Marshal(chirps)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+		if sortDir == "desc" {
+			sort.Slice(chirps, func(i, j int) bool {
+				return chirps[i].CreatedAt.After(chirps[j].CreatedAt)
+			})
 		}
-		w.Write(respBody)
+
+		respondWithJSON(w, http.StatusOK, chirps)
 	})
 }
 
@@ -81,18 +89,18 @@ func handleGetChirps(apiCfg *apiConfig) http.Handler {
 func handleNewChirp(apiCfg *apiConfig) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+			respondWithError(w, http.StatusMethodNotAllowed, "Method Not Allowed", nil)
 			return
 		}
 
 		token, err := auth.GetBearerToken(r.Header)
 		if err != nil {
-			w.WriteHeader(http.StatusUnauthorized)
+			respondWithError(w, http.StatusUnauthorized, "Unauthorized", err)
 			return
 		}
 		userID, err := auth.ValidateJWT(token, apiCfg.secret)
 		if err != nil {
-			w.WriteHeader(http.StatusUnauthorized)
+			respondWithError(w, http.StatusUnauthorized, "Unauthorized", err)
 			return
 		}
 
@@ -124,13 +132,47 @@ func handleNewChirp(apiCfg *apiConfig) http.Handler {
 			return
 		}
 
-		w.WriteHeader(http.StatusCreated)
-		w.Header().Add("Content-Type", "application/json")
-		respBody, err := json.Marshal(chirp)
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
+		respondWithJSON(w, http.StatusCreated, chirp)
+	})
+}
+
+// DELETE /api/chirps/{id}
+func handleDeleteChirp(apiCfg *apiConfig) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		w.Write(respBody)
+
+		token, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			respondWithError(w, http.StatusUnauthorized, "Invalid auth header", err)
+			return
+		}
+
+		userID, err := auth.ValidateJWT(token, apiCfg.secret)
+		if err != nil {
+			respondWithError(w, http.StatusUnauthorized, "Unauthorized", err)
+			return
+		}
+
+		id := r.PathValue("id")
+		chirp, err := apiCfg.db.GetChirp(r.Context(), uuid.MustParse(id))
+		if err != nil {
+			respondWithError(w, http.StatusNotFound, "Not Found", err)
+			return
+		}
+
+		if chirp.UserID != userID {
+			respondWithError(w, http.StatusForbidden, "Forbidden", nil)
+			return
+		}
+
+		if err := apiCfg.db.RemoveChirp(r.Context(), uuid.MustParse(id)); err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Internal Server Error", err)
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
 	})
 }

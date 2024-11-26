@@ -11,7 +11,7 @@ RETURNING *;
 SELECT * FROM chirps WHERE id = $1;
 
 -- name: GetChirpsFromUser :many
-SELECT * FROM chirps WHERE user_id = $1;
+SELECT * FROM chirps WHERE user_id = $1 ORDER BY created_at ASC;
 
 -- name: GetAllChirps :many
 SELECT *

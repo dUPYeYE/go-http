@@ -18,6 +18,7 @@ type apiConfig struct {
 	db             *database.Queries
 	env            string
 	secret         string
+	apiKey         string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -51,6 +52,7 @@ func main() {
 		db:             database.New(db),
 		env:            os.Getenv("ENV"),
 		secret:         os.Getenv("AUTH_SECRET"),
+		apiKey:         os.Getenv("API_KEY"),
 	}
 
 	// app
@@ -76,11 +78,18 @@ func main() {
 	serveMux.Handle("GET /api/chirps/{id}", handleGetChirp(apiCfg))
 	serveMux.Handle("GET /api/chirps", handleGetChirps(apiCfg))
 	serveMux.Handle("POST /api/chirps", handleNewChirp(apiCfg))
+	serveMux.Handle("DELETE /api/chirps/{id}", handleDeleteChirp(apiCfg))
 
 	serveMux.Handle("POST /api/login", handleLogin(apiCfg))
+	serveMux.Handle("POST /api/refresh", handleRefresh(apiCfg))
+	serveMux.Handle("POST /api/revoke", handleRevoke(apiCfg))
 
 	serveMux.Handle("GET /api/users", handleGetUsers(apiCfg))
 	serveMux.Handle("POST /api/users", handleNewUser(apiCfg))
+	serveMux.Handle("PUT /api/users", handleUpdateUser(apiCfg))
+
+	// webhooks
+	serveMux.Handle("POST /api/polka/webhooks", handlePolka(apiCfg))
 
 	// admin
 	serveMux.Handle("GET /admin/metrics", handleMetrics(apiCfg))

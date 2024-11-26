@@ -65,6 +65,53 @@ func handleNewUser(apiCfg *apiConfig) http.Handler {
 			return
 		}
 
-		respondWithJSON(w, http.StatusOK, user)
+		respondWithJSON(w, http.StatusCreated, user)
+	})
+}
+
+// PUT /api/users
+func handleUpdateUser(apiCfg *apiConfig) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			respondWithError(w, http.StatusMethodNotAllowed, "Method Not Allowed", nil)
+			return
+		}
+
+		token, err := auth.GetBearerToken(r.Header)
+		if err != nil {
+			respondWithError(w, http.StatusUnauthorized, "Invalid auth header", err)
+			return
+		}
+
+		userID, err := auth.ValidateJWT(token, apiCfg.secret)
+		if err != nil {
+			respondWithError(w, http.StatusUnauthorized, "Unauthorized", err)
+			return
+		}
+
+		type body struct {
+			Email    string `json:"email"`
+			Password string `json:"password"`
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		var b body
+		if err := decoder.Decode(&b); err != nil {
+			respondWithError(w, http.StatusBadRequest, "Bad Request", err)
+			return
+		}
+
+		hashedPassword, err := auth.HashPassword(b.Password)
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Internal Server Error", err)
+			return
+		}
+		updatedUser, err := apiCfg.db.UpdateUser(r.Context(), database.UpdateUserParams{
+			ID:       userID,
+			Email:    b.Email,
+			Password: hashedPassword,
+		})
+
+		respondWithJSON(w, http.StatusOK, updatedUser)
 	})
 }
